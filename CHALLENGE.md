@@ -33,6 +33,53 @@ The constraint is intentional. We want to see how you triage.
 
 ---
 
+### Other Issues
+
+#### 1. Redis Cache Staleness
+
+**Bug**
+
+`get_offers()` caches offer lists in Redis but the cache is never invalidated when a new offer is submitted.
+
+**Impact under load**
+
+Sellers may see outdated offer lists on the dashboard.
+
+**Fix (pseudocode)**
+
+```python
+self.redis.delete(f"{self.OFFERS_CACHE_PREFIX}{property_id}")
+```
+This should be executed after a successful offer insertion.
+
+**Why not fixed first**
+
+This issue affects UI freshness but does not compromise transaction correctness.
+
+#### 2. N+1 Query Problem
+
+**Bug**
+
+`get_offers()` performs a user lookup for every offer:
+
+```python
+offer["buyer"] = self.db.users.find_one({"_id": offer["buyer_id"]})
+```
+**Impact under load**
+
+If a property has many offers, this generates a large number of database queries and increases MongoDB CPU usage.
+
+**Fix (pseudocode)**
+```python
+buyer_ids = [offer["buyer_id"] for offer in offers]
+buyers = db.users.find({"_id": {"$in": buyer_ids}})
+```
+Batch loading buyers reduces database calls from O(N) to O(1).
+
+**Why not fixed first**
+
+This is primarily a performance issue, while the duplicate offer bug affects data integrity and transaction correctness, making it higher priority.
+
 ## Task 2
 
 **Format:** explanation
