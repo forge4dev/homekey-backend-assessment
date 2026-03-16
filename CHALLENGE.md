@@ -104,6 +104,46 @@ This works fine in staging.
 2. Propose an alternative schema.
 3. There is no schema that solves everything. What does your alternative make harder compared to the embedded approach?
 
+### 1. What can break in production, and why?
+
+Embedding offers inside the property document can cause the document to grow very large as popular listings receive many offers. MongoDB has a **16MB document size limit**, which could eventually be exceeded. Each new offer also requires rewriting the entire property document, creating **write contention on a hot document** when many buyers submit offers concurrently. This increases replication pressure and reduces write throughput. Querying or updating individual offers also becomes inefficient because the full document must be modified.
+
+---
+
+### 2. Proposed alternative schema
+
+Store offers in a **separate collection** and reference the property.
+
+Example:
+
+```json
+properties
+{
+  "_id": "property_abc",
+  "address": "123 Main St",
+  "asking_price": 1200000
+}
+
+offers
+{
+  "_id": ObjectId(),
+  "property_id": "property_abc",
+  "buyer_id": "u1",
+  "amount": 1150000,
+  "status": "pending",
+  "submitted_at": ISODate("2025-11-01T10:00:00Z")
+}
+```
+
+Recommended indexes:
+
+(property_id) |  (property_id, buyer_id) unique | (property_id, submitted_at)
+
+This keeps property documents small and allows offers to scale independently.
+
+### 3. What does the alternative make harder compared to the embedded approach?
+Using separate collections requires additional queries or joins at the application layer when retrieving a property and its offers. Reads may require aggregation pipelines or multiple queries, which adds complexity. Maintaining consistency across collections may also require transactions in certain workflows. Compared to embedding, this can introduce slightly higher read latency. However, it significantly improves scalability for write-heavy workloads.
+
 ---
 
 ## Task 3
