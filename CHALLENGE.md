@@ -155,6 +155,145 @@ Leave comments on any issue you'd flag and order them by priority as we scale up
 
 ---
 
+## Task 3
+
+### Code Review: `get_comparable_sales`
+
+Below are issues I would flag during code review, ordered by priority as the system scales.
+
+---
+
+### 1. Missing Database Index (High Priority)
+
+**Issue**
+
+The query filters by `property_id` and sorts by `sale_price`, but there is no guarantee that a compound index exists.
+
+```python
+self.db.comparable_sales
+    .find({"property_id": property_id})
+    .sort("sale_price", -1)
+    .limit(3)
+```
+Without an index, MongoDB may perform a collection scan and in-memory sort.
+
+**Impact**
+
+Under heavy traffic this increases database CPU usage and latency.
+
+**Fix**
+
+Create a compound index:
+```python
+db.comparable_sales.create_index(
+    [("property_id", 1), ("sale_price", -1)]
+)
+```
+
+### 2. Duplicate Database Query (Medium Priority)
+
+**Issue**
+
+The function performs two database queries:
+
+```python
+top_comps = list(...)
+total = self.db.comparable_sales.count_documents(...)
+```
+
+Both queries scan the same dataset.
+
+**Impact**
+
+This doubles database load and increases latency.
+
+**Fix**
+
+Use an aggregation pipeline:
+
+```python
+pipeline = [
+    {"$match": {"property_id": property_id}},
+    {"$facet": {
+        "top": [{"$sort": {"sale_price": -1}}, {"$limit": 3}],
+        "count": [{"$count": "total"}]
+    }}
+]
+```
+
+This allows MongoDB to compute results in a single query.
+
+### 3. Cache Stampede Risk (Medium Priority)
+
+**Issue**
+
+If the cache expires, many concurrent requests may simultaneously hit the database.
+
+```python
+cached = self.redis.get(cache_key)
+```
+
+**Impact**
+
+This creates bursts of identical database queries.
+
+**Fix**
+
+Use a short lock or request coalescing pattern:
+```python
+SETNX lock_key
+```
+
+Only one request populates the cache while others wait.
+
+
+### 4. Missing Field Projection (Low Priority)
+
+**Issue**
+
+The query retrieves the full document:
+
+```python
+.find({"property_id": property_id})
+```
+
+**Impact**
+
+Unnecessary fields increase network payload and serialization cost.
+
+**Fix**
+
+Limit returned fields:
+
+```python
+.find(
+  {"property_id": property_id},
+  {"address": 1, "sale_price": 1, "sold_at": 1, "distance_km": 1}
+)
+```
+
+### 5. Cache Key Namespace Consistency (Low Priority)
+
+**Issue**
+
+The cache key "comps:{property_id}" is inconsistent with the service prefix pattern.
+
+```python
+cache_key = f"comps:{property_id}"
+```
+
+**Impact**
+
+Inconsistent naming makes cache invalidation and debugging harder.
+
+**Fix**
+
+Use a consistent prefix:
+
+```python
+cache_key = f"{self.VALUATION_CACHE_PREFIX}comps:{property_id}"
+```
+
 ## Task 4
 
 **Format:** explanation
